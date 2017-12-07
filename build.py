@@ -534,6 +534,7 @@ if whichtests in ("${eetestsuite}", "storage"):
      DRBinaryLog_test
      DRTupleStream_test
      ExportTupleStream_test
+     LargeTempTableBlockTest
      LargeTempTableTest
      PersistentTableMemStatsTest
      StreamedTable_test
