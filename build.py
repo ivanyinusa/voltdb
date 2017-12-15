@@ -274,6 +274,7 @@ CTX.INPUT['common'] = """
  Topend.cpp
  TupleOutputStream.cpp
  TupleOutputStreamProcessor.cpp
+ ValueFactory.cpp
  MiscUtil.cpp
  debuglog.cpp
 """
@@ -535,6 +536,7 @@ if whichtests in ("${eetestsuite}", "storage"):
      DRTupleStream_test
      ExportTupleStream_test
      LargeTempTableBlockTest
+     LargeTempTableSortTest
      LargeTempTableTest
      PersistentTableMemStatsTest
      StreamedTable_test
