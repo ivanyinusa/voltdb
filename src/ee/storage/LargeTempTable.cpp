@@ -16,7 +16,7 @@
  */
 
 #include <chrono>
-#include <random>
+#include <cstdlib>
 
 #include "common/LargeTempTableBlockCache.h"
 #include "storage/LargeTempTable.h"
@@ -193,7 +193,6 @@ public:
         , m_tempStorage(schema)
         , m_tempTuple(m_tempStorage.tuple())
         , m_compare(compare)
-        , m_rng(std::chrono::system_clock::now().time_since_epoch().count())
     {
     }
 
@@ -255,7 +254,7 @@ private:
             }
 
             // choose a pivot randomly to avoid worst-case behavior
-            iterator pivot = beginIt + m_rng() % numElems;
+            iterator pivot = beginIt + (rand() % numElems);
             swap(*pivot, endIt[-1]);
             pivot = endIt - 1;
 
@@ -322,7 +321,6 @@ private:
     StandAloneTupleStorage m_tempStorage;
     TableTuple m_tempTuple;
     const AbstractExecutor::TupleComparer& m_compare;
-    std::ranlux48_base m_rng;
 };
 
 

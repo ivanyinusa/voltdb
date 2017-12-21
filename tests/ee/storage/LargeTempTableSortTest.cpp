@@ -55,7 +55,6 @@ class LargeTempTableSortTest : public Test {
 public:
 
     LargeTempTableSortTest()
-        : m_rng(std::chrono::system_clock::now().time_since_epoch().count())
     {
     }
 
@@ -115,10 +114,6 @@ protected:
         }
         while (block->insertTuple(tupleToInsert));
     }
-
-    private:
-
-    std::ranlux48_base m_rng;
 };
 
 namespace {
