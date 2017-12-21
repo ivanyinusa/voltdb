@@ -185,7 +185,7 @@ TEST_F(LargeTempTableSortTest, sortLargeTempTable) {
 
     std::cout << "\n";
     BOOST_FOREACH(auto memoryLimit, tempTableMemoryLimits) {
-        UniqueEngineBuilder builder = UniqueEngineBuilder();
+        UniqueEngineBuilder builder;
         builder.setTopend(std::unique_ptr<LargeTempTableTopend>(new LargeTempTableTopend()));
         if (!memoryLimit) {
             std::cout << "          Default temp table memory:\n";
