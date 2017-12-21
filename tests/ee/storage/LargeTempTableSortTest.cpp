@@ -179,9 +179,16 @@ TEST_F(LargeTempTableSortTest, sortLargeTempTable) {
 
     // Try with the default (100 MB), and then try with a
     // smaller-than-normal configuration, then larger.
+#ifndef MEMCHECK
     std::vector<boost::optional<int64_t>> tempTableMemoryLimits{
         boost::none, 1024 * 1024 * 50, 1024 * 1024 * 200
     };
+#else
+    // In memcheck mode, don't bother resizing TT memory size
+    std::vector<boost::optional<int64_t>> tempTableMemoryLimits{
+        boost::none
+    };
+#endif
 
     std::cout << "\n";
     BOOST_FOREACH(auto memoryLimit, tempTableMemoryLimits) {
@@ -213,9 +220,9 @@ TEST_F(LargeTempTableSortTest, sortLargeTempTable) {
 #else
         //
         std::vector<SortTableSpec> specs {
-            SortTableSpec{64, 2048, 13}, // some non-inlined data
-                SortTableSpec{16, 2048, 13}, // large tuples, no non-inlined data
-                    };
+            SortTableSpec{64, 4096, 13}, // some non-inlined data
+            SortTableSpec{16, 4096, 13}, // large tuples, no non-inlined data
+        };
 #endif
 
         BOOST_FOREACH(auto spec, specs) {
