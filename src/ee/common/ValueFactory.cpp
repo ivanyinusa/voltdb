@@ -69,10 +69,9 @@ NValue ValueFactory::getRandomValue(ValueType type, uint32_t maxLength, Pool* po
             break;
         case VALUE_TYPE_ARRAY:
         default: {
-            throwFatalException("Attempted to get a random value of unsupported value type %d", type);
+            throwSerializableEEException("Attempted to get a random value of unsupported value type %d", type);
         }
     }
-    throw exception();
 }
 
 }

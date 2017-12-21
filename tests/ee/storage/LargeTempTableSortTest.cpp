@@ -88,7 +88,7 @@ protected:
             return NULL;
         }
 
-        return std::move(ltt);
+        return ltt;
     }
 
     TupleSchema* getSchemaOfLength(int32_t varcharLengthBytes, int32_t inlinePadding) {
@@ -181,62 +181,80 @@ bool verifySortedTable(const AbstractExecutor::TupleComparer& comparer,
 
 TEST_F(LargeTempTableSortTest, sortLargeTempTable) {
     using namespace std::chrono;
-    UniqueEngine engine = UniqueEngineBuilder()
-        .setTopend(std::unique_ptr<LargeTempTableTopend>(new LargeTempTableTopend()))
-        .build();
 
-    // Test using different schemas, since large table blocks are
-    // sorted differently depending if they have non-inlined data
-
-    // varchar length (bytes), inline padding, number of blocks
-    typedef std::tuple<int32_t, int32_t, int32_t> SortTableSpec;
-#ifndef MEMCHECK
-    std::vector<SortTableSpec> specs {
-        SortTableSpec{16, 16, 13}, // no non-inlined data
-        SortTableSpec{64, 16, 13}, // small non-inlined data
-        SortTableSpec{2048, 16, 25}, // large non-inlined data
-        SortTableSpec{16, 2048, 25}, // large tuples, no non-inlined data
+    // Try with the default (100 MB), and then try with a
+    // smaller-than-normal configuration, then larger.
+    std::vector<boost::optional<int64_t>> tempTableMemoryLimits{
+        boost::none, 1024 * 1024 * 50, 1024 * 1024 * 200
     };
-#else
-    //
-    std::vector<SortTableSpec> specs {
-        SortTableSpec{64, 2048, 13}, // some non-inlined data
-        SortTableSpec{16, 2048, 13}, // large tuples, no non-inlined data
-    };
-#endif
 
     std::cout << "\n";
-    BOOST_FOREACH(auto spec, specs) {
-        int32_t varcharLength = std::get<0>(spec);
-        int32_t inlinePadding = std::get<1>(spec);
-        int32_t numBlocks = std::get<2>(spec);
+    BOOST_FOREACH(auto memoryLimit, tempTableMemoryLimits) {
+        UniqueEngineBuilder builder = UniqueEngineBuilder();
+        builder.setTopend(std::unique_ptr<LargeTempTableTopend>(new LargeTempTableTopend()));
+        if (!memoryLimit) {
+            std::cout << "          Default temp table memory:\n";
+        }
+        else {
+            std::cout << "          With " << ((*memoryLimit) / (1024*1024))
+                      << " MB of temp table memory:\n";
+            builder.setTempTableMemoryLimit(*memoryLimit);
+        }
 
-        std::cout << "            Generating " << numBlocks
-                  << " blocks of tuples (VARCHAR(" << varcharLength << " BYTES), <"
-                  << inlinePadding << " TINYINT fields>)...";
-        std::cout.flush();
+        UniqueEngine engine = builder.build();
 
-        auto ltt = createAndFillLargeTempTable(varcharLength, inlinePadding, numBlocks);
+        // Test using different schemas, since large table blocks are
+        // sorted differently depending if they have non-inlined data
 
-        TupleValueExpression tve{0, 0}; // table 0, field 0
-        std::vector<AbstractExpression*> keys{&tve};
-        std::vector<SortDirectionType> dirs{SORT_DIRECTION_TYPE_ASC};
-        AbstractExecutor::TupleComparer comparer{keys, dirs};
+        // varchar length (bytes), inline padding, number of blocks
+        typedef std::tuple<int32_t, int32_t, int32_t> SortTableSpec;
+#ifndef MEMCHECK
+        std::vector<SortTableSpec> specs {
+            SortTableSpec{16, 16, 13}, // no non-inlined data
+                SortTableSpec{64, 16, 13}, // small non-inlined data
+                    SortTableSpec{2048, 16, 25}, // large non-inlined data
+                        SortTableSpec{16, 2048, 25}, // large tuples, no non-inlined data
+                            };
+#else
+        //
+        std::vector<SortTableSpec> specs {
+            SortTableSpec{64, 2048, 13}, // some non-inlined data
+                SortTableSpec{16, 2048, 13}, // large tuples, no non-inlined data
+                    };
+#endif
 
-        std::cout << "sorting...";
-        std::cout.flush();
+        BOOST_FOREACH(auto spec, specs) {
+            int32_t varcharLength = std::get<0>(spec);
+            int32_t inlinePadding = std::get<1>(spec);
+            int32_t numBlocks = std::get<2>(spec);
 
-        auto startTime = high_resolution_clock::now();
+            std::cout << "            Generating " << numBlocks
+                      << " blocks of tuples (VARCHAR(" << varcharLength << " BYTES), <"
+                      << inlinePadding << " TINYINT fields>)...";
+            std::cout.flush();
 
-        ltt->sort(comparer, -1, 0); // no limit (-1), no offset (0)
+            auto ltt = createAndFillLargeTempTable(varcharLength, inlinePadding, numBlocks);
 
-        auto endTime = high_resolution_clock::now();
-        auto totalSortDurationMicros = duration_cast<microseconds>(endTime - startTime);
-        std::cout << "sorted " << ltt->activeTupleCount() << " tuples in "
-                  << (totalSortDurationMicros.count() / 1000000.0) << " seconds.\n";
+            TupleValueExpression tve{0, 0}; // table 0, field 0
+            std::vector<AbstractExpression*> keys{&tve};
+            std::vector<SortDirectionType> dirs{SORT_DIRECTION_TYPE_ASC};
+            AbstractExecutor::TupleComparer comparer{keys, dirs};
 
-        ASSERT_TRUE(verifySortedTable(comparer, ltt.get()));
-    }
+            std::cout << "sorting...";
+            std::cout.flush();
+
+            auto startTime = high_resolution_clock::now();
+
+            ltt->sort(comparer, -1, 0); // no limit (-1), no offset (0)
+
+            auto endTime = high_resolution_clock::now();
+            auto totalSortDurationMicros = duration_cast<microseconds>(endTime - startTime);
+            std::cout << "sorted " << ltt->activeTupleCount() << " tuples in "
+                      << (totalSortDurationMicros.count() / 1000000.0) << " seconds.\n";
+
+            ASSERT_TRUE(verifySortedTable(comparer, ltt.get()));
+        } // end for each sort config
+    } // end for each engine config
 
     std::cout << "            ";
 }

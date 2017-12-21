@@ -436,7 +436,9 @@ void LargeTempTable::sort(const AbstractExecutor::TupleComparer& comparer, int l
         sortRunQueue.push(sortRun);
     }
 
-    const int MERGE_FACTOR = 11;
+    // Let's merge as much as we can, reserving one slot in the block
+    // cache for the output of the merge.
+    const int MERGE_FACTOR = lttBlockCache->maxCacheSizeInBlocks() - 1;
     while (sortRunQueue.size() != 1) {
         typedef std::priority_queue<SortRunPtr, std::vector<SortRunPtr>, SortRunComparer> SortRunPriorityQueue;
         SortRunPriorityQueue mergeHeap{SortRunComparer{comparer}};

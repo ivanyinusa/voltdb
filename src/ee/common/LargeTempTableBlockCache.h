@@ -136,6 +136,10 @@ class LargeTempTableBlockCache {
         return m_maxCacheSizeInBytes;
     }
 
+    int maxCacheSizeInBlocks() const {
+        return m_maxCacheSizeInBytes / LargeTempTableBlock::BLOCK_SIZE_IN_BYTES;
+    }
+
     /** Release all large temp table blocks (both resident and stored
         on disk) */
     void releaseAllBlocks();
