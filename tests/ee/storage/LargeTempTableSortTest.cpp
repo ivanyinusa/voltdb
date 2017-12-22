@@ -23,7 +23,6 @@
 
 #include <getopt.h>
 #include <chrono>
-#include <random>
 #include <tuple>
 #include <utility>
 
@@ -90,6 +89,7 @@ protected:
         return ltt;
     }
 
+private:
     TupleSchema* getSchemaOfLength(int32_t varcharLengthBytes, int32_t inlinePadding) {
         TupleSchemaBuilder builder(inlinePadding + 1);
         builder.setColumnAtIndex(0, VALUE_TYPE_VARCHAR, varcharLengthBytes, true, true);
@@ -177,16 +177,36 @@ bool verifySortedTable(const AbstractExecutor::TupleComparer& comparer,
 TEST_F(LargeTempTableSortTest, sortLargeTempTable) {
     using namespace std::chrono;
 
-    // Try with the default (100 MB), and then try with a
-    // smaller-than-normal configuration, then larger.
+    // varchar field length (bytes), inline padding, number of blocks
+    typedef std::tuple<int32_t, int32_t, int32_t> SortTableSpec;
+
 #ifndef MEMCHECK
+    // Vary the max size of temp table storage, since this affects how
+    // many blocks we can merge at once.
     std::vector<boost::optional<int64_t>> tempTableMemoryLimits{
-        boost::none, 1024 * 1024 * 50, 1024 * 1024 * 200
+        boost::none,        // 100 MB (default)
+        1024 * 1024 * 50,   // 50 MB
+        1024 * 1024 * 200   // 200 MB
     };
-#else
-    // In memcheck mode, don't bother resizing TT memory size
+
+    // Try varying schema, some with non-inlined and some without
+    std::vector<SortTableSpec> specs{
+        SortTableSpec{16, 16, 13}, // no non-inlined data
+        SortTableSpec{64, 16, 13}, // small non-inlined data
+        SortTableSpec{2048, 16, 25}, // large non-inlined data
+        SortTableSpec{16, 2048, 25}, // large tuples, no non-inlined data
+    };
+#else // memcheck mode
+    // Memcheck is slow, so just use the default TT storage size
     std::vector<boost::optional<int64_t>> tempTableMemoryLimits{
         boost::none
+    };
+
+    // Use larger tuples so the sorts are faster.  Also test all
+    // inlined as well as some non-inlined data.
+    std::vector<SortTableSpec> specs{
+            SortTableSpec{64, 4096, 13}, // some non-inlined data
+            SortTableSpec{16, 4096, 13}, // large tuples, no non-inlined data
     };
 #endif
 
@@ -204,26 +224,6 @@ TEST_F(LargeTempTableSortTest, sortLargeTempTable) {
         }
 
         UniqueEngine engine = builder.build();
-
-        // Test using different schemas, since large table blocks are
-        // sorted differently depending if they have non-inlined data
-
-        // varchar length (bytes), inline padding, number of blocks
-        typedef std::tuple<int32_t, int32_t, int32_t> SortTableSpec;
-#ifndef MEMCHECK
-        std::vector<SortTableSpec> specs {
-            SortTableSpec{16, 16, 13}, // no non-inlined data
-                SortTableSpec{64, 16, 13}, // small non-inlined data
-                    SortTableSpec{2048, 16, 25}, // large non-inlined data
-                        SortTableSpec{16, 2048, 25}, // large tuples, no non-inlined data
-                            };
-#else
-        //
-        std::vector<SortTableSpec> specs {
-            SortTableSpec{64, 4096, 13}, // some non-inlined data
-            SortTableSpec{16, 4096, 13}, // large tuples, no non-inlined data
-        };
-#endif
 
         BOOST_FOREACH(auto spec, specs) {
             int32_t varcharLength = std::get<0>(spec);
@@ -258,7 +258,7 @@ TEST_F(LargeTempTableSortTest, sortLargeTempTable) {
         } // end for each sort config
     } // end for each engine config
 
-    std::cout << "            ";
+    std::cout << "          ";
 }
 
 int main(int argc, char* argv[]) {

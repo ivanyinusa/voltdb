@@ -180,6 +180,23 @@ std::string LargeTempTable::debug(const std::string& spacer) const {
 
 namespace {
 
+/**
+ * This class sorts a single large temp table block.
+ *
+ * Depending on the table's schema it may choose different ways of
+ * sorting.
+ *
+ * If there are no non-inlined columns, then it can be faster to sort
+ * out-of-place, by sorting instances of TableTuples (16-byte objects
+ * that are a pointer to tuple storage and a pointer to tuple
+ * schema), and then copying the tuples to a new block in the sorted
+ * order.
+ *
+ * If there non-inlined columns then there is an advantage to sorting
+ * in place because all the non-inlined values can be left where they
+ * are.  In this case we do an in-place quicksort, and swap the
+ * position of tuples by copying tuple storage.
+ */
 class BlockSorter {
 public:
     typedef LargeTempTableBlock::iterator iterator;
@@ -238,6 +255,9 @@ public:
 
 private:
 
+    // It turns out the be difficult to use std::sort on objects whose
+    // size is unknown at compile time, so here is an implementation
+    // of quicksort that is similar to those used in the system libraries.
     void quicksort(LargeTempTableBlock::iterator beginIt,
               LargeTempTableBlock::iterator endIt) {
         while (true) {
@@ -246,6 +266,9 @@ private:
             case 0:
             case 1:
                 return;
+            // For small numbers of records, use insertion sort, using
+            // a template parameter so the number of records is known
+            // at compile time.
             case 2: insertionSort<2>(beginIt); return;
             case 3: insertionSort<3>(beginIt); return;
             case 4: insertionSort<4>(beginIt); return;
@@ -296,7 +319,8 @@ private:
 
         for (difference_type i = 0; i < N; ++i) {
             int j = i;
-            while (j > 0 && m_compare(beginIt[j].toTableTuple(m_schema), beginIt[j - 1].toTableTuple(m_schema))) {
+            while (j > 0 && m_compare(beginIt[j].toTableTuple(m_schema),
+                                      beginIt[j - 1].toTableTuple(m_schema))) {
                 swap(beginIt[j - 1], beginIt[j]);
                 --j;
             }
@@ -323,7 +347,11 @@ private:
     const AbstractExecutor::TupleComparer& m_compare;
 };
 
-
+/**
+ * This class bundles a LargeTempTable with a delete-as-you-go
+ * TableIterator.  It's used to merge tables that have already been
+ * sorted into a new, large table.
+ */
 class SortRun {
 public:
     SortRun(LargeTempTable* table)
@@ -388,6 +416,9 @@ private:
 
 typedef std::shared_ptr<SortRun> SortRunPtr;
 
+/**
+ * Compares two sort runs, based on the value of their current tuple.
+ */
 struct SortRunComparer {
     SortRunComparer(const AbstractExecutor::TupleComparer& tupleComparer)
         : m_tupleComparer(tupleComparer)
@@ -399,7 +430,7 @@ struct SortRunComparer {
         const TableTuple& tuple1 = run1->currentTuple();
 
         // transpose arguments to get greater-than instead of
-        // less-than.
+        // less-than, since std::priority_queue is really a max heap.
         return m_tupleComparer(tuple1, tuple0);
     }
 
@@ -414,6 +445,10 @@ void LargeTempTable::sort(const AbstractExecutor::TupleComparer& comparer, int l
     if (limit != -1 || offset != 0) {
         throwSerializableEEException("Limit and offset not yet supported on large temp tables");
     }
+
+    // TODO: caller should pass in a ProgressMonitorProxy (or define
+    // one locally here) to ensure we can cancel the query if it's
+    // taking too long.
 
     LargeTempTableBlockCache* lttBlockCache = ExecutorContext::getExecutorContext()->lttBlockCache();
 

@@ -31,15 +31,27 @@
 template<class TableType>
 struct TableDeleter;
 
+template<class TableType>
+class UniqueTable;
+
 /** Instances of voltdb::Table contain a reference count that needs to
     be managed.  Tables also need to be freed for tests to pass in
     valgrind.
 
-    If a table is destroyed before its reference count is
-    decremented, confusing error messages can result.  This class
-    addresses both issues, providing a unique_ptr-like interface that
-    destroys the table when it goes out of scope and also manages the
-    reference count. */
+    If a table is destroyed before its reference count is decremented,
+    confusing error messages can result, which can mask earlier
+    errors.  This class addresses both issues, providing a
+    unique_ptr-like interface that destroys the table when it goes out
+    of scope and also manages the reference count.
+
+    Use makeUniqueTable to create instances of UniqueTable that can
+    use methods specific to the voltdb::Table subclass you're dealing
+    with.
+*/
+
+template<class TableType>
+UniqueTable<TableType> makeUniqueTable(TableType* tbl);
+
 template<class TableType>
 class UniqueTable {
 public:

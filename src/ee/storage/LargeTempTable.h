@@ -86,6 +86,10 @@ public:
         complete. */
     virtual void finishInserts();
 
+    /**
+     * Sort this table using the given compare function.  Also apply
+     * the given limit and offset.
+     */
     void sort(const AbstractExecutor::TupleComparer& comparer, int limit, int offset);
 
     /** Releases the specified block.  Called by delete-as-you-go

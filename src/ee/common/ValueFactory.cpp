@@ -19,7 +19,9 @@
 
 namespace voltdb {
 
-NValue ValueFactory::getRandomValue(ValueType type, uint32_t maxLength, Pool* pool) {
+NValue ValueFactory::getRandomValue(ValueType type,
+                                    uint32_t maxLength,
+                                    Pool* pool) {
     switch (type) {
         case VALUE_TYPE_TIMESTAMP:
             return ValueFactory::getTimestampValue(static_cast<int64_t>(time(NULL)));
@@ -42,28 +44,26 @@ NValue ValueFactory::getRandomValue(ValueType type, uint32_t maxLength, Pool* po
                 characters[i] = (char)(48 + (rand() % 10));
             }
             characters[i] = '\0';
-            return ValueFactory::getDecimalValueFromString(string(characters));
+            return ValueFactory::getDecimalValueFromString(std::string(characters));
         }
         case VALUE_TYPE_DOUBLE:
-            return ValueFactory::getDoubleValue((rand() % 10000) / (double)(rand() % 10000));
+            return ValueFactory::getDoubleValue((rand() % 10000) / double((rand() % 10000) + 1));
         case VALUE_TYPE_VARCHAR: {
             int length = (rand() % maxLength);
             char characters[maxLength];
             for (int ii = 0; ii < length; ii++) {
-                characters[ii] = (char)(32 + (rand() % 94)); //printable characters
+                characters[ii] = char(32 + (rand() % 94)); //printable characters
             }
             characters[length] = '\0';
-            //printf("Characters are \"%s\"\n", characters);
             return ValueFactory::getStringValue(string(characters), pool);
         }
         case VALUE_TYPE_VARBINARY: {
             int length = (rand() % maxLength);
             unsigned char bytes[maxLength];
             for (int ii = 0; ii < length; ii++) {
-                bytes[ii] = static_cast<unsigned char> (rand() % 256); //printable characters
+                bytes[ii] = static_cast<unsigned char>(rand() % 256);
             }
             bytes[length] = '\0';
-            //printf("Characters are \"%s\"\n", characters);
             return ValueFactory::getBinaryValue(bytes, length, pool);
         }
             break;
