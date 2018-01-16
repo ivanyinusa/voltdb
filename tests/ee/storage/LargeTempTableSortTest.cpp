@@ -183,8 +183,8 @@ TEST_F(LargeTempTableSortTest, sortLargeTempTable) {
 #ifndef MEMCHECK
     // Vary the max size of temp table storage, since this affects how
     // many blocks we can merge at once.
-    std::vector<boost::optional<int64_t>> tempTableMemoryLimits{
-        boost::none,        // 100 MB (default)
+    std::vector<int64_t> tempTableMemoryLimits{
+        voltdb::DEFAULT_TEMP_TABLE_MEMORY, // 100 MB (default)
         1024 * 1024 * 50,   // 50 MB
         1024 * 1024 * 200   // 200 MB
     };
@@ -198,8 +198,8 @@ TEST_F(LargeTempTableSortTest, sortLargeTempTable) {
     };
 #else // memcheck mode
     // Memcheck is slow, so just use the default TT storage size
-    std::vector<boost::optional<int64_t>> tempTableMemoryLimits{
-        boost::none
+    std::vector<int64_t> tempTableMemoryLimits{
+        voltdb::DEFAULT_TEMP_TABLE_MEMORY
     };
 
     // Use larger tuples so the sorts are faster.  Also test all
@@ -214,14 +214,9 @@ TEST_F(LargeTempTableSortTest, sortLargeTempTable) {
     BOOST_FOREACH(auto memoryLimit, tempTableMemoryLimits) {
         UniqueEngineBuilder builder;
         builder.setTopend(std::unique_ptr<LargeTempTableTopend>(new LargeTempTableTopend()));
-        if (!memoryLimit) {
-            std::cout << "          Default temp table memory:\n";
-        }
-        else {
-            std::cout << "          With " << ((*memoryLimit) / (1024*1024))
-                      << " MB of temp table memory:\n";
-            builder.setTempTableMemoryLimit(*memoryLimit);
-        }
+        std::cout << "          With " << (memoryLimit / (1024*1024))
+                  << " MB of temp table memory:\n";
+        builder.setTempTableMemoryLimit(memoryLimit);
 
         UniqueEngine engine = builder.build();
 
