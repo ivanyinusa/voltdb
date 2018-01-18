@@ -196,6 +196,10 @@ namespace {
  * in place because all the non-inlined values can be left where they
  * are.  In this case we do an in-place quicksort, and swap the
  * position of tuples by copying tuple storage.
+ *
+ * If there is a limit (pass -1 to ctor for no limit) then only the
+ * first <limit> tuples will be sorted.  The block may or may not
+ * contain the tuples that follow when the sort method returns.
  */
 class BlockSorter {
 public:
@@ -204,16 +208,22 @@ public:
 
     BlockSorter(LargeTempTableBlockCache* lttBlockCache,
                 const TupleSchema* schema,
-                const AbstractExecutor::TupleComparer& compare)
+                const AbstractExecutor::TupleComparer& compare,
+                int limit)
         : m_lttBlockCache(lttBlockCache)
         , m_schema(schema)
         , m_tempStorage(schema)
         , m_tempTuple(m_tempStorage.tuple())
         , m_compare(compare)
+        , m_limit(limit)
     {
     }
 
     void sort(LargeTempTableBlock* block) {
+        if (m_limit == 0) {
+            return;
+        }
+
         // if there are non-inlined columns, then an in-place
         // sort is usually faster, because we don't have to
         // move any non-inlined values.
@@ -230,7 +240,12 @@ public:
             }
 
             // Sort the vector of TableTuples.
-            std::sort(ttVector.begin(), ttVector.end(), m_compare);
+            if (m_limit == -1) {
+                std::sort(ttVector.begin(), ttVector.end(), m_compare);
+            }
+            else {
+                std::partial_sort(ttVector.begin(), ttVector.begin() + m_limit, ttVector.end(), m_compare);
+            }
 
             LargeTempTableBlock *outputBlock = m_lttBlockCache->getEmptyBlock(m_schema);
 
@@ -238,10 +253,16 @@ public:
             outputBlock->copyNonInlinedData(*block);
 
             // Copy each tuple in the input block to the output block
+            int tupleCount = 0;
             BOOST_FOREACH (TableTuple& tuple, ttVector) {
-                bool success = outputBlock->insertTupleRelocateNonInlinedFields(tuple, block->address());
+                bool success = outputBlock->insertTuple(tuple);
                 if (! success) {
                     throwSerializableEEException("Failed to insert into LTT block during out-of-place sort");
+                }
+
+                ++tupleCount;
+                if (tupleCount == m_limit) {
+                    break;
                 }
             }
 
@@ -345,6 +366,7 @@ private:
     StandAloneTupleStorage m_tempStorage;
     TableTuple m_tempTuple;
     const AbstractExecutor::TupleComparer& m_compare;
+    const int m_limit;
 };
 
 /**
@@ -442,10 +464,6 @@ private:
 
 void LargeTempTable::sort(const AbstractExecutor::TupleComparer& comparer, int limit, int offset) {
 
-    if (offset != 0) {
-        throwSerializableEEException("Offset not yet supported on large temp tables");
-    }
-
     // TODO: caller should pass in a ProgressMonitorProxy (or define
     // one locally here) to ensure we can cancel the query if it's
     // taking too long.
@@ -458,7 +476,7 @@ void LargeTempTable::sort(const AbstractExecutor::TupleComparer& comparer, int l
 
     // Sort each block and create a bunch of 1-block sort runs to be merged below
     std::queue<SortRunPtr> sortRunQueue;
-    BlockSorter sorter{lttBlockCache, m_schema, comparer};
+    BlockSorter sorter{lttBlockCache, m_schema, comparer, limit};
     auto it = getBlockIds().begin();
     while (it != getBlockIds().end()) {
         int64_t blockId = *it;
@@ -477,8 +495,10 @@ void LargeTempTable::sort(const AbstractExecutor::TupleComparer& comparer, int l
         typedef std::priority_queue<SortRunPtr, std::vector<SortRunPtr>, SortRunComparer> SortRunPriorityQueue;
         SortRunPriorityQueue mergeHeap{SortRunComparer{comparer}};
 
+        int offsetLastPass = 0;
         for (int i = 0; i < MERGE_FACTOR; ++i) {
             if (sortRunQueue.empty()) {
+                offsetLastPass = offset;
                 break;
             }
 
@@ -494,14 +514,19 @@ void LargeTempTable::sort(const AbstractExecutor::TupleComparer& comparer, int l
             SortRunPtr run = mergeHeap.top();
             mergeHeap.pop();
 
-            outputSortRun->insertTuple(run->currentTuple());
-            ++outputTupleCount;
-            if (run->advance()) {
-                mergeHeap.push(run);
+            if (offsetLastPass > 0) {
+                --offsetLastPass;
             }
+            else {
+                outputSortRun->insertTuple(run->currentTuple());
+                ++outputTupleCount;
+                if (run->advance()) {
+                    mergeHeap.push(run);
+                }
 
-            if (limit != -1 && outputTupleCount == limit) {
-                break;
+                if (limit != -1 && outputTupleCount == limit) {
+                    break;
+                }
             }
         }
 

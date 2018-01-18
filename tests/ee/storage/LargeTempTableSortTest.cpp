@@ -367,18 +367,55 @@ TEST_F(LargeTempTableSortTest, limitOffset) {
     std::vector<SortDirectionType> dirs{SORT_DIRECTION_TYPE_ASC};
     AbstractExecutor::TupleComparer comparer{keys, dirs};
 
-    // create two tables
-    auto sortedRefTable = createAndFillLargeTempTable(5, 5, 1);
-    auto actualTable = copyLargeTempTable(sortedRefTable.get());
+    // non-inlined data (bytes per tuple), inlined data, num blocks
+    typedef std::tuple<int, int, int> TableConfig;
 
-    sortedRefTable->sort(comparer, -1, 0); // no limit (-1), no offset (0)
+    // limit, offset
+    typedef std::tuple<int, int> SortConfig;
 
-    int limit = 10;
-    int offset = 0;
+    std::vector<TableConfig> tableConfigs{
+        // no non-inlined data
+        TableConfig{63, 64, 3},
+        // Larger records make the test faster
+        TableConfig{4096, 512, 13},  // needs two passes
+        TableConfig{4096, 512, 25}   // more than twice size of block cache
+    };
 
-    actualTable->sort(comparer, limit, offset);
+    std::vector<SortConfig> sortConfigs{
+        SortConfig(1, 0),
+        SortConfig(10, 0),
+        SortConfig(9000, 0),
+        SortConfig(1000000, 0),
+        SortConfig(1, 5),
+        SortConfig(10, 100),
+        SortConfig(9000, 1000),
+        SortConfig(1000000, 1000000)
+    };
 
-    ASSERT_TRUE(validateSortWithLimitOffset(sortedRefTable.get(), actualTable.get(), comparer, limit, offset));
+    BOOST_FOREACH(TableConfig tableConfig, tableConfigs) {
+        int nonInlinedBytes = std::get<0>(tableConfig);
+        int inlinedBytes = std::get<1>(tableConfig);
+        int numBlocks = std::get<2>(tableConfig);
+        std::cout << "\nTable config: "
+                  << nonInlinedBytes << " non-inlined bytes, "
+                  << inlinedBytes << " inlined bytes, "
+                  << numBlocks << " blocks\n";
+
+        auto inputTable = createAndFillLargeTempTable(nonInlinedBytes, inlinedBytes, numBlocks);
+        auto sortedRefTable = copyLargeTempTable(inputTable.get());
+        sortedRefTable->sort(comparer, -1, 0); // no limit (-1), no offset (0)
+
+        BOOST_FOREACH(SortConfig sortConfig, sortConfigs) {
+            int limit = std::get<0>(sortConfig);
+            int offset = std::get<1>(sortConfig);
+            std::cout << "    limit: " << limit << ", offset: " << offset << std::endl;
+
+            auto actualTable = copyLargeTempTable(inputTable.get());
+            actualTable->sort(comparer, limit, offset);
+
+            ASSERT_TRUE(validateSortWithLimitOffset(sortedRefTable.get(), actualTable.get(), comparer, limit, offset));
+        }
+    }
 }
 
 int main(int argc, char* argv[]) {
