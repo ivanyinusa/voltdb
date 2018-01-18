@@ -442,8 +442,8 @@ private:
 
 void LargeTempTable::sort(const AbstractExecutor::TupleComparer& comparer, int limit, int offset) {
 
-    if (limit != -1 || offset != 0) {
-        throwSerializableEEException("Limit and offset not yet supported on large temp tables");
+    if (offset != 0) {
+        throwSerializableEEException("Offset not yet supported on large temp tables");
     }
 
     // TODO: caller should pass in a ProgressMonitorProxy (or define
@@ -451,6 +451,10 @@ void LargeTempTable::sort(const AbstractExecutor::TupleComparer& comparer, int l
     // taking too long.
 
     LargeTempTableBlockCache* lttBlockCache = ExecutorContext::getExecutorContext()->lttBlockCache();
+
+    // Let's merge as much as we can, reserving one slot in the block
+    // cache for the output of the merge.
+    const int MERGE_FACTOR = lttBlockCache->maxCacheSizeInBlocks() - 1;
 
     // Sort each block and create a bunch of 1-block sort runs to be merged below
     std::queue<SortRunPtr> sortRunQueue;
@@ -469,10 +473,7 @@ void LargeTempTable::sort(const AbstractExecutor::TupleComparer& comparer, int l
         sortRunQueue.push(sortRun);
     }
 
-    // Let's merge as much as we can, reserving one slot in the block
-    // cache for the output of the merge.
-    const int MERGE_FACTOR = lttBlockCache->maxCacheSizeInBlocks() - 1;
-    while (sortRunQueue.size() != 1) {
+    do {
         typedef std::priority_queue<SortRunPtr, std::vector<SortRunPtr>, SortRunComparer> SortRunPriorityQueue;
         SortRunPriorityQueue mergeHeap{SortRunComparer{comparer}};
 
@@ -488,19 +489,26 @@ void LargeTempTable::sort(const AbstractExecutor::TupleComparer& comparer, int l
         }
 
         SortRunPtr outputSortRun(new SortRun(TableFactory::buildCopiedLargeTempTable("largesort", this)));
+        int outputTupleCount = 0;
         while (mergeHeap.size() > 0) {
             SortRunPtr run = mergeHeap.top();
             mergeHeap.pop();
 
             outputSortRun->insertTuple(run->currentTuple());
+            ++outputTupleCount;
             if (run->advance()) {
                 mergeHeap.push(run);
+            }
+
+            if (limit != -1 && outputTupleCount == limit) {
+                break;
             }
         }
 
         outputSortRun->finishInserts();
         sortRunQueue.push(outputSortRun);
     }
+    while (sortRunQueue.size() != 1);
 
     swapContents(sortRunQueue.front()->peekTable());
 }

@@ -45,12 +45,13 @@
 
 #include "test_utils/LargeTempTableTopend.hpp"
 #include "test_utils/Tools.hpp"
+#include "test_utils/TupleComparingTest.hpp"
 #include "test_utils/UniqueEngine.hpp"
 #include "test_utils/UniqueTable.hpp"
 
 using namespace voltdb;
 
-class LargeTempTableSortTest : public Test {
+class LargeTempTableSortTest : public TupleComparingTest {
 public:
 
     LargeTempTableSortTest()
@@ -87,6 +88,85 @@ protected:
         }
 
         return ltt;
+    }
+
+    UniqueTable<LargeTempTable> copyLargeTempTable(LargeTempTable* srcTable) {
+        auto dstTable = makeUniqueTable(TableFactory::buildCopiedLargeTempTable("copy", srcTable));
+
+        TableIterator tblIt = srcTable->iterator();
+        TableTuple tuple(srcTable->schema());
+        while (tblIt.next(tuple)) {
+            dstTable->insertTuple(tuple);
+        }
+
+        dstTable->finishInserts();
+
+        return dstTable;
+    }
+
+    bool validateSortWithLimitOffset(Table* sortedRefTable,
+                                     Table* actualTable,
+                                     const AbstractExecutor::TupleComparer& comparer,
+                                     int limit,
+                                     int offset) {
+        TableIterator refTblIt = sortedRefTable->iterator();
+        TableTuple refTuple(sortedRefTable->schema());
+        std::ostringstream oss;
+
+        // Advance reference table past offset
+        for (int i = 0; i < offset; ++i) {
+            bool hasTuple = refTblIt.next(refTuple);
+            if (! hasTuple) {
+                break;
+            }
+        }
+
+        oss << "Validating sort (offset = "
+            << offset << ", limit = " << limit << "): ";
+
+        int tupleCount = 0;
+        TableIterator actualTblIt = actualTable->iterator();
+        TableTuple actualTuple(actualTable->schema());
+        while (actualTblIt.next(actualTuple)) {
+            bool hasTuple = refTblIt.next(refTuple);
+            if (! hasTuple) {
+                oss << "actual table has too many rows: " << actualTable->activeTupleCount() << "\n";
+                std::cerr << oss.str();
+                return false;
+            }
+
+            for (int i = 0; i < refTuple.columnCount(); ++i) {
+                NValue refNVal = refTuple.getNValue(i);
+                NValue actualNVal = actualTuple.getNValue(i);
+                int cmp = Tools::nvalueCompare(refNVal, actualNVal);
+                if (cmp != 0) {
+                    oss << "at tuple " << tupleCount << ", values in position " << i << " invalid; "
+                        << "expected: " << refNVal.debug() << ", actual: " << actualNVal.debug() << "\n";
+                    std::cerr << oss.str();
+                    return false;
+                }
+            }
+
+            ++tupleCount;
+        }
+
+        if (limit > 0 && tupleCount > limit) {
+            oss << "actual table has more than " << limit << " rows (it has "
+                << actualTable->activeTupleCount() << ") and exceeds limit\n";
+            std::cerr << oss.str();
+            return false;
+        }
+
+        if (tupleCount < limit) {
+            bool hasTuple = refTblIt.next(refTuple);
+            if (hasTuple) {
+                oss << "actual table has fewer rows than expected\n";
+                std::cerr << oss.str();
+                return false;
+            }
+        }
+
+        return true;
     }
 
 private:
@@ -191,10 +271,10 @@ TEST_F(LargeTempTableSortTest, sortLargeTempTable) {
 
     // Try varying schema, some with non-inlined and some without
     std::vector<SortTableSpec> specs{
-        SortTableSpec{16, 16, 13}, // no non-inlined data
-        SortTableSpec{64, 16, 13}, // small non-inlined data
-        SortTableSpec{2048, 16, 25}, // large non-inlined data
-        SortTableSpec{16, 2048, 25}, // large tuples, no non-inlined data
+        // SortTableSpec{16, 16, 13}, // no non-inlined data
+        // SortTableSpec{64, 16, 13}, // small non-inlined data
+        // SortTableSpec{2048, 16, 25}, // large non-inlined data
+        SortTableSpec{16, 2048, 1}, // large tuples, no non-inlined data
     };
 #else // memcheck mode
     // Memcheck is slow, so just use the default TT storage size
@@ -254,6 +334,51 @@ TEST_F(LargeTempTableSortTest, sortLargeTempTable) {
     } // end for each engine config
 
     std::cout << "          ";
+}
+
+// namespace {
+//     void showFirstFiveTuples(int offset, Table* table) {
+//         TableTuple tuple(table->schema());
+//         TableIterator it = table->iterator();
+//         int i = 1;
+//         std::cout << std::endl;
+//         while (it.next(tuple)) {
+//             if (offset > 0) {
+//                 --offset;
+//             }
+//             else {
+//                 std::cout << tuple.debug() << std::endl;
+//                 ++i;
+//                 if (i > 5) {
+//                     break;
+//                 }
+//             }
+//         }
+//     }
+// }
+
+TEST_F(LargeTempTableSortTest, limitOffset) {
+    UniqueEngineBuilder builder;
+    builder.setTopend(std::unique_ptr<LargeTempTableTopend>(new LargeTempTableTopend()));
+    UniqueEngine engine = builder.build();
+
+    TupleValueExpression tve{0, 0}; // table 0, field 0
+    std::vector<AbstractExpression*> keys{&tve};
+    std::vector<SortDirectionType> dirs{SORT_DIRECTION_TYPE_ASC};
+    AbstractExecutor::TupleComparer comparer{keys, dirs};
+
+    // create two tables
+    auto sortedRefTable = createAndFillLargeTempTable(5, 5, 1);
+    auto actualTable = copyLargeTempTable(sortedRefTable.get());
+
+    sortedRefTable->sort(comparer, -1, 0); // no limit (-1), no offset (0)
+
+    int limit = 10;
+    int offset = 0;
+
+    actualTable->sort(comparer, limit, offset);
+
+    ASSERT_TRUE(validateSortWithLimitOffset(sortedRefTable.get(), actualTable.get(), comparer, limit, offset));
 }
 
 int main(int argc, char* argv[]) {
